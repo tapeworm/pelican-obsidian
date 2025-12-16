@@ -3,9 +3,12 @@
 import os
 import re
 import logging
+from io import StringIO
 from itertools import chain
 from pathlib import Path
 
+from jinja2 import Template
+from dotenv import load_dotenv, dotenv_values, find_dotenv
 from pelican import signals
 from pelican.utils import pelican_open
 from pelican.plugins.yaml_metadata.yaml_metadata import YAMLMetadataReader, HEADER_RE
@@ -114,12 +117,42 @@ class ObsidianMarkdownReader(YAMLMetadataReader):
         if not m:
             return super().read(source_path)
 
+        metadata = self._load_yaml_metadata(m.group("metadata"), source_path)
         text = m.group("content")
+
+        if metadata.get('jinja2'):
+            context = os.environ.copy()
+            # Load .env file
+            env_vars = dotenv_values(find_dotenv(usecwd=True))
+            context.update(env_vars)
+
+            dot_env_path = ARTICLE_PATHS.get('dot-env')
+            if dot_env_path is not None:
+                base_path = Path(self.settings.get('PATH', '.'))
+                # Remove leading slash if present to avoid treating it as absolute path
+                if dot_env_path.startswith('/'):
+                    dot_env_path = dot_env_path[1:]
+                full_dot_env_path = base_path / dot_env_path / 'dot-env.md'
+
+                if full_dot_env_path.exists():
+                    with pelican_open(str(full_dot_env_path)) as dot_env_text:
+                        dm = HEADER_RE.fullmatch(dot_env_text)
+                        if dm:
+                            env_content = dm.group("content")
+                        else:
+                            env_content = dot_env_text
+
+                        dot_env_vars = dotenv_values(stream=StringIO(env_content))
+                        context.update(dot_env_vars)
+
+            template = Template(text)
+            text = template.render(**context)
+
         content = self.replace_obsidian_links(text)
 
         return (
             self._md.reset().convert(content),
-            self._load_yaml_metadata(m.group("metadata"), source_path),
+            metadata,
         )
 
 
