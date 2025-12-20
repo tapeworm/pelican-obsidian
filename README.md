@@ -61,6 +61,52 @@ Files are similar:
 They explain more about the syntax in the section on [how to embed files](https://help.obsidian.md/How+to/Embed+files)
 
 
+Jinja2 Templating
+-----------------
+
+You can use Jinja2 templating within your Markdown files to insert variables dynamically. This is useful for sharing configuration between your Obsidian vault and your Pelican site.
+
+To use this feature, you must install the optional dependencies:
+
+    pip install pelican-obsidian[jinja2]
+
+Enable Jinja2 processing for a note by adding `jinja2: true` to its frontmatter:
+
+```yaml
+---
+title: My Dynamic Note
+jinja2: true
+---
+
+Hello, {{ MY_VARIABLE }}!
+```
+
+### Variable Sources & Precedence
+
+Variables are loaded from the following sources, in order of precedence (highest to lowest):
+
+1.  **File Metadata**: Variables defined in the note's frontmatter override everything else.
+2.  **OS Environment**: System environment variables.
+3.  **`.env` File**: Variables from a `.env` file in the project root (loaded via `python-dotenv`).
+4.  **`dot-env` Note**: Variables defined in a specific note in your Obsidian vault (default: `dot-env`).
+
+### Configuration
+
+You can configure the following settings in your `pelicanconf.py`:
+
+*   `OBSIDIAN_DOT_ENV_NOTE` (default: `'dot-env'`): The name of the note in your vault that acts as a global source of variables. This note should contain `KEY=VALUE` pairs (like a `.env` file).
+*   `OBSIDIAN_JINJA_FILTERS` (default: `{}`): A dictionary of custom Jinja2 filters to register.
+
+    ```python
+    def my_upper_filter(value):
+        return value.upper()
+
+    OBSIDIAN_JINJA_FILTERS = {
+        'my_upper': my_upper_filter,
+    }
+    ```
+
+
 Future features
 ---------------
 - Embed files or sections as described [here](https://help.obsidian.md/How+to/Format+your+notes)
