@@ -3,8 +3,16 @@
 import os
 import re
 import logging
+from io import StringIO
 from itertools import chain
 from pathlib import Path
+
+try:
+    from jinja2 import Template, Environment
+    from dotenv import load_dotenv, dotenv_values, find_dotenv
+    JINJA2_INSTALLED = True
+except ImportError:
+    JINJA2_INSTALLED = False
 
 from pelican import signals
 from pelican.utils import pelican_open
@@ -114,12 +122,72 @@ class ObsidianMarkdownReader(YAMLMetadataReader):
         if not m:
             return super().read(source_path)
 
+        metadata = self._load_yaml_metadata(m.group("metadata"), source_path)
         text = m.group("content")
+
+        if metadata.get('jinja2'):
+            if not JINJA2_INSTALLED:
+                if self.settings.get('OBSIDIAN_JINJA_WARN', True):
+                    __log__.warning(
+                        "Jinja2 is not installed but requested by file %s. "
+                        "Please install it via 'pip install pelican-obsidian[jinja2]'.",
+                        source_path
+                    )
+            else:
+                try:
+                    # 1. Start with dot-env vars (lowest priority)
+                    context = {}
+
+                    dot_env_note_name = self.settings.get('OBSIDIAN_DOT_ENV_NOTE', 'dot-env')
+                    dot_env_path = ARTICLE_PATHS.get(dot_env_note_name)
+
+                    if dot_env_path is not None:
+                        base_path = Path(self.settings.get('PATH', '.'))
+                        # Remove leading slash if present to avoid treating it as absolute path
+                        if dot_env_path.startswith('/'):
+                            dot_env_path = dot_env_path[1:]
+                        full_dot_env_path = base_path / dot_env_path / f'{dot_env_note_name}.md'
+
+                        if full_dot_env_path.exists():
+                            with pelican_open(str(full_dot_env_path)) as dot_env_text:
+                                dm = HEADER_RE.fullmatch(dot_env_text)
+                                if dm:
+                                    env_content = dm.group("content")
+                                else:
+                                    env_content = dot_env_text
+
+                                dot_env_vars = dotenv_values(stream=StringIO(env_content))
+                                context.update(dot_env_vars)
+
+                    # 2. .env file
+                    env_vars = dotenv_values(find_dotenv(usecwd=True))
+                    context.update(env_vars)
+
+                    # 3. OS Environ
+                    context.update(os.environ)
+
+                    # 4. Metadata (highest priority)
+                    context.update(metadata)
+
+                    # Create Jinja2 Environment
+                    env = Environment()
+
+                    # Register custom filters
+                    custom_filters = self.settings.get('OBSIDIAN_JINJA_FILTERS', {})
+                    if custom_filters:
+                        env.filters.update(custom_filters)
+
+                    template = env.from_string(text)
+                    text = template.render(**context)
+                except Exception as e:
+                    __log__.error("Error rendering Jinja2 template in %s: %s", source_path, e)
+                    # We continue with original text if rendering fails
+
         content = self.replace_obsidian_links(text)
 
         return (
             self._md.reset().convert(content),
-            self._load_yaml_metadata(m.group("metadata"), source_path),
+            metadata,
         )
 
 
